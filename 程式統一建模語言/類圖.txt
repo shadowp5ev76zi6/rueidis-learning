@@ -1,0 +1,117 @@
+@startuml
+
+package rueidis {
+    interface Client {
+        + B() cmds.Builder
+        + Do(ctx context.Context, cmd cmds.Completed) (resp RedisResult)
+        + DoCache(ctx context.Context, cmd cmds.Cacheable, ttl time.Duration) (resp RedisResult)
+        + Receive(ctx context.Context, subscribe cmds.Completed, fn func(msg PubSubMessage)) error
+        + Dedicated(fn func(DedicatedClient) error) (err error)
+        + Close()
+    }
+    note top of Client { 
+        由 NewClient 函式產生，此函式可以接受客戶端選項
+        網路 IP 就由客戶端選項傳入
+        之後會依照伺服器 IP 的數量去觸發 newSentinelClient 或 newClusterClient 函式
+    }
+    
+    class singleClient {
+        - conn conn
+        - cmds.Builder cmd
+        + B() cmds.Builder
+        + Do(ctx context.Context, cmd cmds.Completed) (resp RedisResult)
+        + DoCache(ctx context.Context, cmd cmds.Cacheable, ttl time.Duration) (resp RedisResult)
+        + Receive(ctx context.Context, subscribe cmds.Completed, fn func(msg PubSubMessage)) (err error)
+        + Dedicated(fn func(DedicatedClient) error) (err error)
+        + Close()
+    }
+    note top of singleClient { 
+        由 newSingleClient 函式產生，此函式可以傳入重新連線的函式
+        重新連線的函式會重建 mux 對象
+    }
+
+    interface wire {
+        + Do(ctx context.Context, cmd cmds.Completed) RedisResult
+        + DoCache(ctx context.Context, cmd cmds.Cacheable, ttl time.Duration) RedisResult
+        + DoMulti(ctx context.Context, multi ...cmds.Completed) []RedisResult
+        + Receive(ctx context.Context, subscribe cmds.Completed, fn func(message PubSubMessage)) error
+        + Info() map[string]RedisMessage
+        + Error() error
+        + Close()
+    }
+    note top of wire { 
+        連接到客戶端的快取
+    }
+    
+    interface conn {
+        - wire
+        + Dial() error
+        + Override(conn)
+        + Acquire() wire
+        + Store(w wire)
+    }
+
+    class singleconnect {
+        - wire w
+        - error e
+        - sync.WaitGroup g
+    }
+    
+    class pool {
+        - wire dead
+        - sync.Cond cond
+        - func wire make
+        - []wire list
+        - int size
+        - bool down
+    }
+    
+    class mux {
+        - wire init
+        - wire dead
+        - atomic.Value wire
+        - atomic.Value doneFn
+        - *singleconnect sc
+        - *pool pool
+        - wireFn wireFn
+        - string dst
+        - sync.Mutex mu
+        + Do(ctx context.Context, cmd cmds.Completed) (resp RedisResult)
+        + DoCache(ctx context.Context, cmd cmds.Cacheable, ttl time.Duration) RedisResult
+        + DoMulti(ctx context.Context, multi ...cmds.Completed) (resp []RedisResult)
+        + Receive(ctx context.Context, subscribe cmds.Completed, fn func(message PubSubMessage)) error
+        + Info() map[string]RedisMessage
+        + Error() error
+        + Close()
+        + Dial() error
+        + Override(cc conn)
+        + Acquire() wire
+        + Store(w wire)
+        - _newPooledWire() wire
+        - pipe() wire
+        - _pipe() (w wire, err error)
+        - blocking(ctx context.Context, cmd cmds.Completed) (resp RedisResult)
+        - blockingMulti(ctx context.Context, cmd []cmds.Completed) (resp []RedisResult)
+        - pipeline(ctx context.Context, cmd cmds.Completed) (resp RedisResult)
+        - pipelineMulti(ctx context.Context, cmd []cmds.Completed) (resp []RedisResult)
+    }
+    
+    singleconnect::w o-- wire
+    mux "3" o-- wire
+    
+    mux::pool o-- pool
+    mux::sc o-- singleconnect
+    
+    
+    singleClient ..|> Client: 實現
+    singleClient::conn *-- conn: 組成
+    conn --|> wire: 續承
+    
+    singleconnect *-- sync.WaitGroup: 組成
+    
+    mux --- conn: 編譯時進行簡查
+    mux *-- sync.Mutex: 組成
+}
+
+
+@enduml
