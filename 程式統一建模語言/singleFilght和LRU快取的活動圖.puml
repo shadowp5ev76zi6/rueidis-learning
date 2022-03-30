@@ -2,6 +2,16 @@
 
 start
 
+fork
+  :另一個 Pipe;
+  :處理 single flight (_pipe);
+partition "Single Flight 的被通知方" {
+  #Pink :等待 channel 關閉 (Wait));
+  #Pink :讀取快取;
+}
+
+fork again
+
 :mux 物件;
 
 :處理 single flight (_pipe);
@@ -9,16 +19,19 @@ start
 if (是否結束連線?) then (是)
 else (否)
 endif
-
 if (讀寫分離(background)?) then (讀)
   :背景讀 (_backgroundWrite));
   :讀取Redis;
-  #Pink :等待 LRU 快取包裡的 channel 通知寫入完成;
+partition "Single Flight 的主動通知方" {
+  #Pink :更新快取;
+  #Pink :關閉 LRU 快取包裡的 channel 通知其他 Pipe 快取更新完成 (close(ch)));
+}
 else (寫)
   :背景寫 _backgroundRead;
   :寫入Redis;
-  :更新快取;
 endif
+
+end merge
 
 stop
 
