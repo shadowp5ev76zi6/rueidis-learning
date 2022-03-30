@@ -1,0 +1,25 @@
+@startuml
+
+start
+
+:mux 物件;
+
+:處理 single flight (_pipe);
+
+if (是否結束連線?) then (是)
+else (否)
+endif
+
+if (讀寫分離(background)?) then (讀)
+  :背景讀 (_backgroundWrite));
+  :讀取Redis;
+  #Pink :等待 LRU 快取包裡的 channel 通知寫入完成;
+else (寫)
+  :背景寫 _backgroundRead;
+  :寫入Redis;
+  :更新快取;
+endif
+
+stop
+
+@enduml
