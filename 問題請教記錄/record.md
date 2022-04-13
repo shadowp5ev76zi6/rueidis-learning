@@ -119,3 +119,61 @@ pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Red
 了解，謝謝您，後來再去看程式碼，發現程式清除數據是從頭開始清除了，所以往後移動數據就可以留久一點
 
 <img src="../assets/image-20220329021737097.png" alt="image-20220329021737097" style="zoom:100%;" /> 
+
+## 2022年3月24日
+
+### 問題
+
+這是一個比較沒有變化的 LRU cache 的組件圖
+您的 cache 很有趣，變化比較多，之後再畫成另一張組件圖作比較
+想請教您，兩個問題
+1 您的 cache 有使用 channel 作等待，cache 已經有 sync.RWMutex 多讀單寫的上鎖，
+再加一個 channel 做更進一步的控制，讓有些讀取可以進行必要的等待，
+我是覺得很有趣，我這樣理解正確嗎？
+2 moveThreshold 臨界值的用途為？我是想不透
+謝謝
+
+<img src="../assets/image-20220414004906895.png" alt="image-20220414004906895" style="zoom:100%;" />
+
+補上程式碼的圖片
+
+<img src="../assets/image-20220414005013211.png" alt="image-20220414005013211" style="zoom:80%;" /> 
+
+### 解答
+
+1. 對，RWMutex 是為了取出 entry。取出後 entry 本身就用 channel 做 singleflight
+2. moveThreshold 只是為了增加使用 RLock 的機會而已
+
+### 回應
+
+關於 single flight 的部份我還要在更仔細的看程式碼了，看看能不能再學習到更多技巧。
+後來我再去查，程式不會把 "快取的擊中次數" 重置為零
+代表只是單純想讓 "擊中次數超過臨界值的資料" 將更有機會留在快取裡。
+謝謝您的引導和解答
+
+<img src="../assets/image-20220414005258672.png" alt="image-20220414005258672" style="zoom:80%;" /> 
+
+## 2022年4月7日
+
+### 問題
+
+我也把您上星期所說的改正如下圖，並用紫色來標記
+
+也找到您提到 cache missing 的部份，但還是看不懂，請教您一下，關於這段程式碼
+} else if entry != nil {
+return newResult(entry.Wait(), nil)
+
+我對這小段程式碼的理解為 當 LRU cache 有資料，再進行 single fligt 的等待
+
+我想請教的是，LRU cache 都己經有資料了，為何還要等待，就直接回傳不就好了？
+
+謝謝您
+
+<img src="../assets/image-20220414003928521.png" alt="image-20220414003928521" style="zoom:100%;" />
+
+### 解答
+
+第一個分支的 v.typ != 0 才是真的 cache hit
+
+那個 entry 就是之前提到的 singleflight placeholder，有拿到這個 placeholder 的就要等待
+沒拿到 placeholder 的就創建一個並且往下走真的發出 request
