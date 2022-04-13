@@ -26,7 +26,13 @@
 
 ### 問題
 
-pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Redis 傳送多條訊息，再一次讀取多條回應的結果請教一下，我有看到您把 pipe 的連線用 Close() 函式關閉，pipe 的連線不就無法再繼續接收到 Redis 的新訊息了，那您是如何恢復 pipe 的連線的？如果能的話，能否配合程式碼說明，謝謝
+pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Redis 傳送多條訊息，再一次讀取多條回應的結果
+
+請教一下，我有看到您把 pipe 的連線用 Close() 函式關閉，pipe 的連線不就無法再繼續接收到 Redis 的新訊息了
+
+那您是如何恢復 pipe 的連線的？
+
+如果能的話，能否配合程式碼說明，謝謝
 
 <img src="../assets/image-20220309220454983.png" alt="image-20220309220454983" style="zoom:100%;" />
 
@@ -38,7 +44,21 @@ pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Red
 
 ### 問題
 
-這一段程式碼就可以看出是環狀結構環狀的數量為 2 的 n 次方，比如 2^3 = 88 的二進制為 1000環狀的數量減一的值為 77 的二進制為 01111000 和 0111 用 & 操作為 0今天值只要一直增加，加到 8 時，用 & 操作，就直接跳回原點 0就為環狀結構請教一下，PutOne 和 PutMulti 兩個函式中，是否可以用 PutMulti 函式去取代 PutOne 函式的功能，可能您為了能節省效能，所以另外在多寫出 PutOne 函式，還是說 PutOne 和 PutMulti 有不同的意義和用途？謝謝
+這一段程式碼就可以看出是環狀結構環狀的數量為 2 的 n 次方，
+
+比如 2^3 = 88 的二進制為 1000
+
+環狀的數量減一的值為 77 的二進制為 0111
+
+1000 和 0111 用 & 操作為 0
+
+今天值只要一直增加，加到 8 時，用 & 操作，就直接跳回原點 0 就為環狀結構
+
+請教一下，PutOne 和 PutMulti 兩個函式中，是否可以用 PutMulti 函式去取代 PutOne 函式的功能
+
+可能您為了能節省效能，所以另外在多寫出 PutOne 函式
+
+還是說 PutOne 和 PutMulti 有不同的意義和用途？謝謝
 
 <img src="../assets/image-20220309220829597.png" alt="image-20220309220829597" style="zoom:100%;" /> 
 
@@ -50,7 +70,11 @@ pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Red
 
 ### 問題
 
-請教一個問題？大部份 sync.WaitGroup 的 Done 會在 Wait 的前面請問為何這裡程式碼，為何 Wait 會在 Done 的前面，我是認為 _pipe() 會在不同的地方被執行，但細節我目前不清楚？是否能說明運作流程？謝謝
+請教一個問題？
+
+大部份 sync.WaitGroup 的 Done 會在 Wait 的前面請問為何這裡程式碼，為何 Wait 會在 Done 的前面，我是認為 _pipe() 會在不同的地方被執行，但細節我目前不清楚？
+
+是否能說明運作流程？謝謝
 
 <img src="../assets/image-20220309221250899.png" alt="image-20220309221250899" style="zoom:100%;" /> 
 
@@ -64,7 +88,11 @@ pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Red
 
 ## 2022年2月23日
 
-請教一個問題，我去看程式的流程，當使用 Pipe 時，最後要寫入 EOF 的訊息作為結束，代表沒有資料要傳送了p.background() 會傳入 Pipe EOF 訊息，但在比較後面，而且有 if 判斷式，代表不一定會執行如果 p.background() 不及時執行的話，那不就代表 writeCmd(p.w, cmd.Commands()) 和 syncRead(p.r) 會發生互相等待，那整個 syncDo 函式不會停止我主要是想要請教 EOF 在程式碼裡是如何傳送和處理的？謝謝
+請教一個問題，我去看程式的流程，當使用 Pipe 時，最後要寫入 EOF 的訊息作為結束，代表沒有資料要傳送了p.background() 會傳入 Pipe EOF 訊息，但在比較後面，而且有 if 判斷式，代表不一定會執行
+
+如果 p.background() 不及時執行的話，那不就代表 writeCmd(p.w, cmd.Commands()) 和syncRead(p.r) 會發生互相等待，那整個 syncDo 函式不會停止
+
+我主要是想要請教 EOF 在程式碼裡是如何傳送和處理的？謝謝
 
 <img src="../assets/image-20220309221926308.png" alt="image-20220309221926308" style="zoom:100%;" />
 
@@ -78,19 +106,33 @@ pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Red
 
 ### 問題
 
-我一開始還覺得奇怪，把 mockClient.Close() 註解起來，整個程式永遠不會停止，進行互相等待的死結，後來想想這是合理的因為要告知 Pipe 沒有更多的資料要傳了，執行 Close() 函式時，(應該同時也傳入 EOF)我是想要請教您，這方面的問題，您是如何處理的？如果防止 mockClient 和 mockServer 互相等待的死結？沒有告知對方EOF的訊息，程式不會停的
+我一開始還覺得奇怪，把 mockClient.Close() 註解起來，整個程式永遠不會停止，進行互相等待的死結，後來想想這是合理的因為要告知 Pipe 沒有更多的資料要傳了，執行 Close() 函式時，(應該同時也傳入 EOF)
+
+我是想要請教您，這方面的問題，您是如何處理的？
+
+如果防止 mockClient 和 mockServer 互相等待的死結？
+
+沒有告知對方EOF的訊息，程式不會停的
 
 <img src="../assets/image-20220309222356943.png" alt="image-20220309222356943" style="zoom:100%;" /> 
 
 ### 解答
 
-喔，原來你說是 Go 的 io.EOF，這只是 Golang 用來表示一個 read stream 已經讀完了的訊息。而一個 tcp stream 什麼時候才會讀完？就是讀到對方送給你的 FIN 包的時候，這時候 Golang 會返回 io.EOF 給你。而你用的 io.ReadAll 的行為就是要把整個 stream 讀完，也就是讀到 io.EOF 才結束。在 Redis client 中 tcp stream 是重複使用的，不會用 io.ReadAll 來讀取
+喔，原來你說是 Go 的 io.EOF，這只是 Golang 用來表示一個 read stream 已經讀完了的訊息。
+
+而一個 tcp stream 什麼時候才會讀完？就是讀到對方送給你的 FIN 包的時候，這時候 Golang 會返回 io.EOF 給你。
+
+而你用的 io.ReadAll 的行為就是要把整個 stream 讀完，也就是讀到 io.EOF 才結束。
+
+在 Redis client 中 tcp stream 是重複使用的，不會用 io.ReadAll 來讀取
 
 ## 2022年3月2日
 
 ### 問題
 
-我這樣理解，您看對不對？如果要在圖上找 pipe 物件的位置，我認為pipe 類實現 wire 接口，wire 接口可以讀寫 client side cache，因為這接口有 DoCache 函式再上一層的 conn 接口可以重置連線，因為這接口有 Overwrite 函式最後 mux 類為所有功能的大集合，就把它當成主要的控制端Client 接口為用戶介面，Client 接口馬上直接連接到 mux 控制端，就可以控制整個程式了這樣子理解對嗎？謝謝
+我這樣理解，您看對不對？
+
+如果要在圖上找 pipe 物件的位置，我認為pipe 類實現 wire 接口，wire 接口可以讀寫 client side cache，因為這接口有 DoCache 函式再上一層的 conn 接口可以重置連線，因為這接口有 Overwrite 函式最後 mux 類為所有功能的大集合，就把它當成主要的控制端Client 接口為用戶介面，Client 接口馬上直接連接到 mux 控制端，就可以控制整個程式了這樣子理解對嗎？謝謝
 
 <img src="../assets/image-20220309222617175.png" alt="image-20220309222617175" style="zoom:100%;" />
 
@@ -125,12 +167,19 @@ pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Red
 ### 問題
 
 這是一個比較沒有變化的 LRU cache 的組件圖
+
 您的 cache 很有趣，變化比較多，之後再畫成另一張組件圖作比較
+
 想請教您，兩個問題
+
 1 您的 cache 有使用 channel 作等待，cache 已經有 sync.RWMutex 多讀單寫的上鎖，
+
 再加一個 channel 做更進一步的控制，讓有些讀取可以進行必要的等待，
+
 我是覺得很有趣，我這樣理解正確嗎？
+
 2 moveThreshold 臨界值的用途為？我是想不透
+
 謝謝
 
 <img src="../assets/image-20220414004906895.png" alt="image-20220414004906895" style="zoom:100%;" />
@@ -147,8 +196,11 @@ pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Red
 ### 回應
 
 關於 single flight 的部份我還要在更仔細的看程式碼了，看看能不能再學習到更多技巧。
+
 後來我再去查，程式不會把 "快取的擊中次數" 重置為零
+
 代表只是單純想讓 "擊中次數超過臨界值的資料" 將更有機會留在快取裡。
+
 謝謝您的引導和解答
 
 <img src="../assets/image-20220414005258672.png" alt="image-20220414005258672" style="zoom:80%;" /> 
@@ -160,8 +212,7 @@ pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Red
 我也把您上星期所說的改正如下圖，並用紫色來標記
 
 也找到您提到 cache missing 的部份，但還是看不懂，請教您一下，關於這段程式碼
-} else if entry != nil {
-return newResult(entry.Wait(), nil)
+} else if entry != nil {return newResult(entry.Wait(), nil)
 
 我對這小段程式碼的理解為 當 LRU cache 有資料，再進行 single fligt 的等待
 
@@ -176,4 +227,5 @@ return newResult(entry.Wait(), nil)
 第一個分支的 v.typ != 0 才是真的 cache hit
 
 那個 entry 就是之前提到的 singleflight placeholder，有拿到這個 placeholder 的就要等待
+
 沒拿到 placeholder 的就創建一個並且往下走真的發出 request
