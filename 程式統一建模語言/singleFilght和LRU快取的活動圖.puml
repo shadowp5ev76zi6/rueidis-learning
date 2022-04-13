@@ -1,38 +1,46 @@
 @startuml
 
 start
-
 fork
-  :另一個 Pipe;
-  :處理 single flight (_pipe);
-partition "Single Flight 的被通知方" {
-  #Pink :等待 channel 關閉 (Wait));
-  #Pink :讀取快取;
+  :使用者執行 DoCache();
+  :mux 物件;
+partition "第一次執行 Single Flight 的通知方 (執行 Pipe() 函式)" #FFCC99 {
+  :準備連線;
+  :第一個取後連線;
 }
-
-fork again
-
-:mux 物件;
-
+  :mux 物件先去查詢 LRU Cache;
+if (cache missing?) then (是)
+if (是否有 Place Holder?) then (否)
 :處理 single flight (_pipe);
-
 if (是否結束連線?) then (是)
-else (否)
 endif
 if (讀寫分離(background)?) then (讀)
   :背景讀 (_backgroundWrite));
   :讀取Redis;
-partition "Single Flight 的主動通知方" {
-  #Pink :更新快取;
-  #Pink :關閉 LRU 快取包裡的 channel 通知其他 Pipe 快取更新完成 (close(ch)));
+partition "第二次執行 Single Flight 的通知方 (執行 DoChache() 函式)" #FFCCCC {
+  :更新快取;
+  :關閉 LRU 快取包裡的 channel;
 }
 else (寫)
   :背景寫 _backgroundRead;
   :寫入Redis;
 endif
-
+else (是)
+partition "第二次執行 Single Flight 的等待方 (執行 DoCache() 函式)" #FFCCCC {
+  :等待Cache更新完成;
+}
+endif
+else (否)
+endif
+  :回傳查詢結果;
+fork again
+partition "第一次執行 Single Flight 的等待方 (執行 Pipe() 函式)" #FFCC99 {
+  :另一個 Pipe;
+  :處理 single flight (_pipe);
+  :等待;
+  :回傳連線;
+  end
+}
 end merge
-
 stop
-
 @enduml
