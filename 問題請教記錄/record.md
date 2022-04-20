@@ -205,6 +205,34 @@ pipe 的優點在程式碼裡可以看得到，DoMulti 函式可以處理向 Red
 
 <img src="../assets/image-20220414005258672.png" alt="image-20220414005258672" style="zoom:80%;" /> 
 
+## 2022年3月31日
+
+### 問題
+
+我想您說的 Single Flight 和 LRU 快取的關係如下圖
+
+很多 pipe 會執行，但是大多數 pipe 會等待，因為 channel 沒訊號送來，所以會先等待，為下圖的 "Single Flight 的被通知方" 的部份
+
+少數的 pipe ，會更新 cache 和 利用 channel 去通知其他 pipe 快取已更新了，大家可以去讀資料了，為下圖的 "Single Flight 的主動通知方" 的部份
+
+我覺得這張圖還不是很清楚，有錯誤請指正，謝謝
+
+另外我在聽到有人在 meetup 問在本地的快取，如何克服 GC 效能的問題？您在提到一些專案，請問 這些專案的 github 在那？謝謝您
+
+<img src="../assets/image-20220421011851575.png" alt="image-20220421011851575" style="zoom:100%;" /> 
+
+### 解答
+
+我是這樣想：
+
+當使用者用 DoCache() 的時候，先查找 LRU Cache。如果 Cache Miss 的話，會在 Cache 中創建一個 singleflight placeholder，同時也會往下層 pipe 送 redis request。當 response 回來的時候就可以更新 placeholder 並通知其他在等待的 goroutine。
+
+我在 Meetup 中提到的是 bigcache 跟 fastcache：
+
+https://github.com/VictoriaMetrics/fastcache
+
+https://github.com/allegro/bigcache
+
 ## 2022年4月7日
 
 ### 問題
