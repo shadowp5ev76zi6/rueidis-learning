@@ -3,15 +3,15 @@
 start
 fork
   :使用者執行 DoCache();
-  :mux 物件;
+  :產生 mux 物件，pipe 物件實現 wire 接口;
 partition "第一次執行 Single Flight 的通知方 (執行 Pipe() 函式)" #FFCC99 {
   :準備連線;
-  :第一個取後連線;
+  :第一個取後連線 (_pipe);
 }
-  :mux 物件先去查詢 LRU Cache;
+  :pipe 物件先去查詢 LRU Cache;
 if (cache missing?) then (是)
 if (是否有 Place Holder?) then (否)
-:處理 single flight (_pipe);
+:處理 single flight;
 if (是否結束連線?) then (是)
 endif
 if (讀寫分離(background)?) then (讀)
