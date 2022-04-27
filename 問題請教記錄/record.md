@@ -257,3 +257,96 @@ https://github.com/allegro/bigcache
 那個 entry 就是之前提到的 singleflight placeholder，有拿到這個 placeholder 的就要等待
 
 沒拿到 placeholder 的就創建一個並且往下走真的發出 request
+
+## 2022年4月14日
+
+### 問題
+
+我發現之前 Sigle Flight 運作圖，我畫的錯誤太多了，所以大修改
+
+先直接說我認為的結論，您 Single Flight 做兩次，但是這兩次的 Single Flight 不同
+
+第一次的 Single Flight 是在建立和 Redis 的連線
+
+第二次的 Single Flight 才是真的去跟 Redis 進行查詢
+
+雖然程式會先去查詢 LRU 快取，但是和 Redis 的連線會先準備好
+
+您所說的 Place Holder 就是為了要做 Single Flight 的關鍵，所以 LRU 快取才要做 Channel 進行等待
+
+如圖中所示
+
+wire := m.pipe() 為建立連線
+
+resp := wire.DoCache(ctx, cmd, ttl) 為向 LRU Cache 查詢
+
+而 wire := m.pipe() 在 resp := wire.DoCache(ctx, cmd, ttl) 的前面
+
+從這裡可以知道和 Redis 的連線會先準備好
+
+如果還有錯誤請指正，謝謝您
+
+另外，能否提示一下，之前請教的問題，PutOne 函式不能被 PutMulti 取代的原因為何？
+謝謝
+
+<img src="../assets/image-20220428033006289.png" alt="image-20220428033006289" style="zoom:100%;" />
+
+附上修正的運作圖
+
+橘色的區塊為第一次的 Single Flight，主要是先準備和 Redis 的連線
+
+紅色的區塊為第二次的 Single Flight，會對 Redis 進行查詢
+
+<img src="../assets/image-20220428033321506.png" alt="image-20220428033321506" style="zoom:100%;" />
+
+### 解答
+
+- 由 mux 去查找 cache 應該是不太對，Cache 是在pipe 物件內部的，圖上改成由 pipe 負責比較接近實際的程式碼
+- 是可以被 PutMulti 取代的，只是我覺得分開會對 GC 的影響比較小
+
+## 2022年4月21日
+
+### 問題
+
+我參考之前畫的類圖，把活動圖進行修正，改成
+* 產生 mux 物件，pipe 物件實現 wire 接口
+* pipe 物件先去查詢 LRU Cache
+
+
+
+另外我想請教，您上星期提到，考量的 GC 問題是否為以下內容？
+
+```go
+type queue interface {
+    PutOne(m cmds.Completed) chan RedisResult
+    PutMulti(m []cmds.Completed) chan RedisResult
+    NextWriteCmd() (cmds.Completed, []cmds.Completed, chan RedisResult)
+    NextResultCh() (cmds.Completed, []cmds.Completed, chan RedisResult, *sync.Cond)
+}
+```
+
+在 PutMulti(m []cmds.Completed) chan RedisResult 這一行
+[]cmds.Completed 為切片內含指標，cmds.Completed 資料內有指標資料，如下
+
+```go
+type Completed struct {
+    cs *CommandSlice
+    cf uint16
+    ks uint16
+}
+```
+
+切片內含指標會給 GC 造成壓力，我以前有想過這問題，後來想想，覺得問題可能不大
+
+因為如果切片內含指標，到時程式會想辨法限制切片的大小，避免 GC 壓力過大
+
+我是覺得，如果把 PutOne 合拼並拼入 PutMulti，雖然會有參數 []cmds.Completed 為 切片內含指標，但是切片大小為1，資料量太小，對於 GC 壓力應不大
+
+我是比較支持 PutOne 拼入 PutMulti，還是您有其他的考量？謝謝
+
+<img src="../assets/image-20220428034315921.png" alt="image-20220428034315921" style="zoom:100%;" />
+
+### 解答
+
+是沒其他考量了，我想這邊還需要再研究一下。
+如果對 GC 沒影響，那合併起來是最好，code 會更簡單一些。但有影響的話我覺得分開還是值得的。
