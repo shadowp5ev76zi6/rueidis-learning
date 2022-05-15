@@ -350,3 +350,83 @@ type Completed struct {
 
 是沒其他考量了，我想這邊還需要再研究一下。
 如果對 GC 沒影響，那合併起來是最好，code 會更簡單一些。但有影響的話我覺得分開還是值得的。
+
+## 2022年4月28日
+
+### 問題
+
+以前在看您的程式，會很明顯看到會先執行 Build 函式，一開始會看不太懂
+
+比如
+
+c.Do(ctx, c.B().Set().Key("key").Value("val").Nx().Build()).Error() 中
+B() 函式為 Build 函式
+
+之後再把類圖繼續往下畫，圖中紅色部份為最新新增的部份。
+
+queue 接口會使用 Completed 物件做為參數。
+
+而 Completed 物件是由 Arbitrary 物件 提供的方法產生出來的。
+
+Arbitrary 物件會使用 sync.Pool 去提升效能，減少產生和回收物件的動作，減少 GC 的壓力。
+
+所以我認為，會常看到 B() 函式進行 Build 的動作，原因是在於為了要提升程式性能，減少 GC 壓力，不知道這樣的說法是否正確？
+
+另外請教一個問題，在程式碼檔案裡 rueidis/internal/cmds/gen.go ，有一行 Code generated DO NOT EDIT。
+
+這代表整個程式碼是自動產生的，但是在 gen.go 旁沒有看到自動產生程式的腳本，不太清楚這些程式碼是怎麼來的？
+
+也不太清楚 gen.go 的程式碼和 整個專案 rueidis 是如何連接的？
+
+謝謝
+
+<img src="../assets/image-20220516025842683.png" alt="image-20220516025842683" style="zoom:100%;" />
+
+### 解答
+
+B() 是 command builder 的入口，呼叫後就會從 Pool 中取出 []string 準備塞入 command 用，的確是為了減少 GC。
+internal/cmds/gen.go 是由 /hack/cmds/gen.go 生出來的
+
+## 2022年5月5日
+
+### 問題
+
+我閱讀了 rueidis/hack/cmds/gen.go 程式碼後，這裡所產生的程式碼 應為最後要傳送到 redis 指令的地方
+
+看到這份自動產生程式碼的程式，第一個直覺在想兩個問題，想要請教您
+1 這是否為 AST 節點？
+2 在 hack 資料夾裡是在想要突破什麼效能議題？
+
+( 題外話，我目前參與的專案的廣度和深度都比較大，把專案當課本
+同一個專案，用到很多技巧，其中一個技巧就是 AST 節點
+也有 hack 資料夾，hack 資夾內可能是處理效能的相關議題，我一直覺得 Go 語言是有難度的
+所以難免我會有這些聯想 )
+
+關於第一點，您的 rueidis/hack/cmds/gen.go 程式碼，我覺得有點像 Ast 節點，但好像又少了一些東西，
+
+像 Ast 節點的原因為有樹狀結構產生，比如 AclDeluser 的子結點為 AclDeluserUsername
+但是結點的類型從頭到尾只有一種類型為
+type node struct {
+Parent *node
+Child *node
+Next *node
+Cmd command
+Arg argument
+Root bool
+}
+
+如果是 AST 結點的話，應會有各種不同類型的節點可以進行操作
+可能您也認為這不是 AST 節點，所以沒有把 package 名種命名為 ast
+
+第二點，放在 hack 資料夾的程式可能會和效能有關，可能您一直在處理 GC 的效能議題，所以才把程式碼放在 hack 資料夾內
+
+之後，自動產生的程式碼也和 sync.Pool 連接在一起
+我對 AST 節點不熟，如果觀念錯誤，麻煩指正了，謝謝
+
+<img src="../assets/image-20220516030420284.png" alt="image-20220516030420284" style="zoom:100%;" /> 
+
+### 解答
+
+這段程式碼跟 AST 還有效能都無關，它也不在 rueidis 裡面運行。
+
+它單純是個 code generator 用來生產 rueidis 的 command builder
