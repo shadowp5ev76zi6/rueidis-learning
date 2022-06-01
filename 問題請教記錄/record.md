@@ -430,3 +430,192 @@ Root bool
 這段程式碼跟 AST 還有效能都無關，它也不在 rueidis 裡面運行。
 
 它單純是個 code generator 用來生產 rueidis 的 command builder
+
+## 2022年5月19日
+
+### 問題
+
+之後有考慮要使用 single flight，看您操作兩次後來有想，為何 single flight 不跟 sync cond 一起使用？
+
+所以自己就來試試看，好像可行，程式碼如下[https://go.dev/play/p/eV490rghJor](https://go.dev/play/p/eV490rghJor?fbclid=IwAR39To0eb7c0x_lhKQtnbuqUMehMeY-ZIX00gWB3uxn5udNZhFHsEXRnTyI)請教一下，如果我這樣做，會有什麼問題？
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type demo struct {
+	status atomic.Value
+	cond   *sync.Cond
+}
+
+var done = false
+
+type demoFunc func(string)
+
+func (d *demo) NewDemo() demoFunc {
+	var returnfunc demoFunc
+	if d.status.Load().(int) != 0 {
+		if d.cond != nil {
+			returnfunc = d.read
+		}
+	}
+	if d.status.Load().(int) == 0 {
+		d.status.Store(1)
+		d.cond = sync.NewCond(&sync.Mutex{})
+		returnfunc = d.write
+	}
+	return returnfunc
+}
+
+func (d *demo) read(name string) {
+	d.cond.L.Lock()
+	for !done {
+		fmt.Println(name, "waits")
+		d.cond.Wait()
+	}
+	log.Println(name, "starts reading")
+	d.cond.L.Unlock()
+}
+
+func (d *demo) write(name string) {
+	log.Println(name, "starts writing")
+	d.cond.L.Lock()
+	done = true
+	d.cond.L.Unlock()
+	log.Println(name, "wakes all")
+	d.cond.Broadcast()
+}
+
+func main() {
+	demo := &demo{}
+	demo.status.Store(0)
+
+	array := [5]string{"A", "B", "C", "D", "E"}
+
+	for i := 0; i < len(array); i++ {
+		go func(i int) {
+			demo.NewDemo()(array[i])
+		}(i)
+	}
+
+	time.Sleep(time.Second * 3)
+}
+```
+
+### 解答
+
+你的 NewDemo() 裡面會有 race
+
+atomic.Value 沒辦法這樣當作 Lock 用除此之外，用 sync cond 只要知道到 Wait() 離開前會自動呼叫 L.Lock() 就沒問題了
+
+## 2022年5月26日
+
+### 問題
+
+您上次提到我程式有 race 的問題，您說的沒錯，是有這個問題如下圖所示，如果紅色區塊為蛋殼的話，上週程式蛋殼有縫，會被協程衝破
+
+改良的程式碼如下[https://go.dev/play/p/bqbPzdMM3kz](https://go.dev/play/p/bqbPzdMM3kz?fbclid=IwAR2VgqKTK-TKKp8z47_ji3LIfGUxjn8g_yd5WRLpQ-vzyoi95CI4j6ueIvM)
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type demo struct {
+	cond   *sync.Cond
+	status int32
+	count  uint64
+}
+
+var done = false
+
+type demoFunc func(string)
+
+func (d *demo) NewDemo() demoFunc {
+	atomic.AddUint64(&d.count, 1)
+	var returnfunc demoFunc
+LOOP:
+	exchange := atomic.CompareAndSwapInt32(&d.status, 0, 1)
+	if exchange == false {
+		if d.cond != nil {
+			returnfunc = d.read
+		}
+		if d.count == 1 {
+			goto LOOP
+		}
+	}
+	if exchange == true {
+		returnfunc = d.write
+	}
+	return returnfunc
+}
+
+func (d *demo) read(name string) {
+	d.cond.L.Lock()
+	for !done {
+		fmt.Println(name, "waits")
+		d.cond.Wait()
+	}
+	log.Println(name, "starts reading")
+	d.cond.L.Unlock()
+}
+
+func (d *demo) write(name string) {
+	log.Println(name, "starts writing")
+	d.cond.L.Lock()
+	done = true
+	d.cond.L.Unlock()
+	log.Println(name, "wakes all")
+	d.cond.Broadcast()
+}
+
+func main() {
+	demo := &demo{}
+	demo.cond = sync.NewCond(&sync.Mutex{})
+
+	array := [7]string{"A", "B", "C", "D", "E", "F", "G"}
+
+	for i := 0; i < len(array); i++ {
+		go func(i int) {
+			demo.NewDemo()(array[i])
+		}(i)
+	}
+
+	time.Sleep(time.Second * 3)
+}
+```
+
+改良的方式就是把蛋殼的縫補起來，二行程式碼合成一行
+
+改良效果也不錯，我覺得這個 Single Flight 比較好讀，效能也不錯
+
+請教您一個問題，這個版本的 Slight Flight 和您版本的 Slight Flight 那個比較好？
+
+還有這個 Slight Flight 您覺得還有那些漏洞，謝謝您
+
+<img src="../assets/image-20220602023102601.png" alt="image-20220602023102601" style="zoom:100%;" />
+
+這是執行結果，多個協程程式再執行過程中，只有部份協程等待，所以我才會比較喜歡這個版本的 Single Flight
+
+<img src="../assets/image-20220602023147461.png" alt="image-20220602023147461" style="zoom:100%;" /> 
+
+目前基準測試也壓的過去，上週程式直接 panic
+
+<img src="../assets/image-20220602023253385.png" alt="image-20220602023253385" style="zoom:100%;" />
+
+### 解答
+
+30 行的 d.count 要用 atomic load31 行的 busy wait 最好避免，而且看起來有可能無窮迴圈singleflight 的 cond Locker 可以試試看 RWMutex
