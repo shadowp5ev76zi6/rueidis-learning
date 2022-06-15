@@ -619,3 +619,211 @@ func main() {
 ### 解答
 
 30 行的 d.count 要用 atomic load31 行的 busy wait 最好避免，而且看起來有可能無窮迴圈singleflight 的 cond Locker 可以試試看 RWMutex
+
+## 2022年6月2日
+
+### 問題
+
+後來才發現用 sync 包可以寫三個 single flight 版本，版本1 為接近您的版本，我覺得您的版本比較好
+
+版本3 是我新寫的版本，光想到版本3 的上鎖，我就預期效能會很不好，光聽您提到用 RWMutex 我就知道問題出在那裡
+
+版本1 使用 sync wait group ，程式碼如下
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type demo struct {
+	wait   sync.WaitGroup
+	status int32
+	done   bool
+	value  int
+}
+
+type demoFunc func(string)
+
+func (d *demo) NewDemo() demoFunc {
+	if exchange := atomic.CompareAndSwapInt32(&d.status, 0, 1); exchange == true {
+		return d.write
+	}
+	return d.read
+}
+
+func (d *demo) read(name string) {
+	if !d.done {
+		fmt.Println(name, "waits")
+		d.wait.Wait()
+	}
+	log.Println(name, "starts reading with lock", d.value)
+}
+
+func (d *demo) write(name string) {
+	log.Println(name, "starts writing")
+	d.value = 1
+	d.done = true
+	log.Println(name, "wakes all", d.value)
+	d.wait.Done()
+}
+
+func main() {
+	demo := &demo{}
+	demo.wait.Add(1)
+
+	array := [26]string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"}
+
+	for i := 0; i < len(array); i++ {
+		go func(i int) {
+			demo.NewDemo()(array[i])
+		}(i)
+	}
+
+	time.Sleep(time.Second * 3)
+}
+
+```
+
+版本2 使用 sync rwmutex ，程式碼如下
+
+````go
+package main
+
+import (
+	"fmt"
+	"log"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type demo struct {
+	rwLock sync.RWMutex
+	status int32
+	done   bool
+	value  int
+}
+
+type demoFunc func(string)
+
+func (d *demo) NewDemo() demoFunc {
+	if exchange := atomic.CompareAndSwapInt32(&d.status, 0, 1); exchange == true {
+		return d.write
+	}
+	return d.read
+}
+
+func (d *demo) read(name string) {
+	d.rwLock.RLock()
+	if !d.done {
+		fmt.Println(name, "waits")
+	}
+	log.Println(name, "starts reading with lock", d.value)
+	d.rwLock.RLock()
+}
+
+func (d *demo) write(name string) {
+	log.Println(name, "starts writing")
+	// d.rwLock.Lock()
+	d.value = 1
+	d.done = true
+	log.Println(name, "wakes all")
+	d.rwLock.Unlock()
+}
+
+func main() {
+	demo := &demo{}
+	demo.rwLock = sync.RWMutex{}
+	demo.rwLock.Lock()
+
+	array := [26]string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"}
+
+	for i := 0; i < len(array); i++ {
+		go func(i int) {
+			demo.NewDemo()(array[i])
+		}(i)
+	}
+
+	time.Sleep(time.Second * 3)
+}
+````
+
+版本3 使用 sync cond ，程式碼如下
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type demo struct {
+	cond   *sync.Cond
+	status int32
+	done   bool
+	value  int
+}
+
+type demoFunc func(string)
+
+func (d *demo) NewDemo() demoFunc {
+	if exchange := atomic.CompareAndSwapInt32(&d.status, 0, 1); exchange == true {
+		return d.write
+	}
+	return d.read
+}
+
+func (d *demo) read(name string) {
+	switch d.done {
+	case true:
+		log.Println(name, "starts reading without lock", d.value)
+	case false:
+		d.cond.L.Lock()
+		for !d.done {
+			fmt.Println(name, "waits")
+			d.cond.Wait()
+		}
+		log.Println(name, "starts reading with lock", d.value)
+		d.cond.L.Unlock()
+	}
+}
+
+func (d *demo) write(name string) {
+	log.Println(name, "starts writing")
+	d.cond.L.Lock()
+	d.value = 1
+	d.done = true
+	d.cond.L.Unlock()
+	log.Println(name, "wakes all")
+	d.cond.Broadcast()
+}
+
+func main() {
+	demo := &demo{}
+	demo.cond = sync.NewCond(&sync.Mutex{})
+
+	array := [26]string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"}
+
+	for i := 0; i < len(array); i++ {
+		go func(i int) {
+			demo.NewDemo()(array[i])
+		}(i)
+	}
+
+	time.Sleep(time.Second * 3)
+}
+```
+
+這三組程式會送去做基準測試，會把 runlevel 下降去壓測，去除作業系統圖形介面干擾，不過我預期版本3效能不會太好，測了就知道
+
+做測試時，程式碼還要在小修改，慢慢把協程數量一直加大去壓測三組程式
