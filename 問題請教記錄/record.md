@@ -622,7 +622,7 @@ func main() {
 
 ## 2022年6月2日
 
-### 問題
+### 測試中
 
 後來才發現用 sync 包可以寫三個 single flight 版本，版本1 為接近您的版本，我覺得您的版本比較好
 
@@ -827,3 +827,405 @@ func main() {
 這三組程式會送去做基準測試，會把 runlevel 下降去壓測，去除作業系統圖形介面干擾，不過我預期版本3效能不會太好，測了就知道
 
 做測試時，程式碼還要在小修改，慢慢把協程數量一直加大去壓測三組程式
+
+## 2022年6月9日
+
+我用三個 single flight 版本去進行基準測試測試環境為 
+
+Linux 核心版本為 4.19.0-16-amd64，無 GUI 介面
+
+Go 版本為 1.18.3
+
+CPU 為 Intel i5-8250U ( 8 ) @ 3.400GHz
+
+Memory 為 31870MiB
+
+測試結果為waitGroup 版本效能最好，也是 rueidis 的版本，這符合預期，因為能少上鎖就少上鎖cond 版本效能為次好，也是我的餿主意，這不符合預期，因為我預期這版本跑出來的數據會很慘，結果表現還能看
+
+rwMux 版本效能為最不好，這也不符合預期，沒想到是三組數據最不好的
+
+進行測試時，程式要改寫，如下
+
+waitGroup 版本
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+var total = 1000
+
+var count sync.WaitGroup
+
+type demo struct {
+	wait   sync.WaitGroup
+	status int32
+	done   bool
+	value  int
+}
+
+type demoFunc func(int)
+
+func (d *demo) NewDemo() demoFunc {
+	if exchange := atomic.CompareAndSwapInt32(&d.status, 0, 1); exchange == true {
+		return d.write
+	}
+	return d.read
+}
+
+func (d *demo) read(num int) {
+	if !d.done {
+		d.wait.Wait()
+	}
+	if d.value != 1 {
+		panic("error" + fmt.Sprintln(d.value))
+	}
+	count.Done()
+}
+
+func (d *demo) write(num int) {
+	d.value = 1
+	d.done = true
+	d.wait.Done()
+	count.Done()
+}
+
+func main() {
+	count.Add(total)
+
+	demo := &demo{}
+	demo.wait.Add(1)
+
+	for i := 0; i < total; i++ {
+		go func(i int) {
+			demo.NewDemo()(i)
+		}(i)
+	}
+
+	count.Wait()
+}
+
+// >>>>> >>>>> >>>>> >>>>> >>>>>
+
+/*
+package main
+
+import (
+	"testing"
+)
+
+func Benchmark_Main(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		count.Add(total)
+
+		demo := &demo{}
+		demo.wait.Add(1)
+
+		for i := 0; i < total; i++ {
+			go func(i int) {
+				demo.NewDemo()(i)
+			}(i)
+		}
+
+		count.Wait()
+	}
+}
+*/
+```
+
+rwMux 版本
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+var total = 1000
+
+var count sync.WaitGroup
+
+type demo struct {
+	rwLock sync.RWMutex
+	status int32
+	done   bool
+	value  int
+}
+
+type demoFunc func(int)
+
+func (d *demo) NewDemo() demoFunc {
+	if exchange := atomic.CompareAndSwapInt32(&d.status, 0, 1); exchange == true {
+		return d.write
+	}
+	return d.read
+}
+
+func (d *demo) read(num int) {
+	d.rwLock.RLock()
+	if d.value != 1 {
+		panic("error" + fmt.Sprintln(d.value))
+	}
+	d.rwLock.RLock()
+	count.Done()
+}
+
+func (d *demo) write(num int) {
+	d.value = 1
+	d.done = true
+	d.rwLock.Unlock()
+	count.Done()
+}
+
+func main() {
+	count.Add(total)
+
+	demo := &demo{}
+	demo.rwLock = sync.RWMutex{}
+	demo.rwLock.Lock()
+
+	for i := 0; i < total; i++ {
+		go func(i int) {
+			demo.NewDemo()(i)
+		}(i)
+	}
+
+	count.Wait()
+}
+
+// >>>>> >>>>> >>>>> >>>>> >>>>> 
+
+/*
+package main
+
+import (
+	"sync"
+	"testing"
+)
+
+func Benchmark_Main(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		count.Add(total)
+
+		demo := &demo{}
+		demo.rwLock = sync.RWMutex{}
+		demo.rwLock.Lock()
+
+		for i := 0; i < total; i++ {
+			go func(i int) {
+				demo.NewDemo()(i)
+			}(i)
+		}
+
+		count.Wait()
+	}
+}
+*/
+```
+
+cond 版本
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+var total = 1000
+
+var count sync.WaitGroup
+
+type demo struct {
+	cond   *sync.Cond
+	status int32
+	done   bool
+	value  int
+}
+
+type demoFunc func(int)
+
+func (d *demo) NewDemo() demoFunc {
+	if exchange := atomic.CompareAndSwapInt32(&d.status, 0, 1); exchange == true {
+		return d.write
+	}
+	return d.read
+}
+
+func (d *demo) read(num int) {
+	switch d.done {
+	case true:
+		if d.value != 1 {
+			panic("error" + fmt.Sprintln(d.value))
+		}
+		count.Done()
+	case false:
+		d.cond.L.Lock()
+		for !d.done {
+			d.cond.Wait()
+		}
+		if d.value != 1 {
+			panic("error" + fmt.Sprintln(d.value))
+		}
+		d.cond.L.Unlock()
+		count.Done()
+	}
+}
+
+func (d *demo) write(num int) {
+	d.cond.L.Lock()
+	d.value = 1
+	d.done = true
+	d.cond.L.Unlock()
+	d.cond.Broadcast()
+	count.Done()
+}
+
+/*
+func main() {
+	count.Add(total)
+
+	demo := &demo{}
+	demo.cond = sync.NewCond(&sync.Mutex{})
+
+	for i := 0; i < total; i++ {
+		go func(i int) {
+			demo.NewDemo()(i)
+		}(i)
+	}
+
+	count.Wait()
+}
+*/
+```
+
+結果我是覺得不合預期，您覺得呢？
+
+<img src="../assets/image-20220714053507956.png" alt="image-20220714053507956" style="zoom:100%;" />
+
+### 解答
+
+waitGroup 版本中第 30 行讀取 d.done 是會 race 的，要直接 d.wait.Wait()
+
+單純用 rwMux 的版本因為可能很久才會輪到 write goroutine 執行，所以比較不好應該是合理
+
+cond 版本第 30 行讀取 d.done 一樣是會 race 的。你可以把 d.cond.L.Lock() 底下接到 rwMux.RLock
+
+## 2022年6月16日和23日
+
+1 這次跑基準測試，比上星期小心了，注意機器的散熱，不然數據會跳動
+
+2 要測 write 協程何時結束工作，只要修改二行程式碼，當 write 協程結束工作時，主程式也就跟著結束工作，是可以測出
+
+3 我是用上鎖的程度去判斷那一個版本的效能最好，我認為上鎖的程度為 cond 版本 \> RWMux 版本 > waitGroup 版本，上愈少鎖效能愈好，我預期 RWMux 版本效能應不是最差的
+
+最後上星期您說
+
+單純用 rwMux 的版本因為可能很久才會輪到 write goroutine 執行，所以比較不好應該是合理
+
+根據基準測試的結果，協程數量為 100000，和您說的相符合，不過我不是很了解原因，您能說明更多細節嗎？謝謝
+
+<img src="../assets/image-20220714054414384.png" alt="image-20220714054414384" style="zoom:100%;" />
+
+我假設以下原因會有這些現象，您看看有沒有道理？
+
+問題一，數據為何會跳動？
+
+假設一：和機器散熱有關，每次執行基準測試時，要先停15秒，等機器散熱完畢
+
+假設二：和調度器 scheduler 有關，要看調度器何時把 write 協調排進 queue 裡，還是一開始就被處理掉了
+
+問題二，數據為何 cond 的效能會比 rwMux 還要好？
+
+假設：因為 cond 底層的 lock 可以用 mutex 或 rwMux 去實作，而我的例子是用 mutex
+
+所以先直接比較 mutex 和 rwMux 的性能就可以
+
+在 write 協程很早完成工作時，mutex 效能會比 rwMux 好
+
+在 write 協程很晚很晚才完成工作時，rwMux 效能會比 mutex 好
+
+因為 mutex 的 lock 可以用 channel 去模擬
+
+如果 write 協程很早完成工作時，channel 就被關閉了，這時 所有 read 協程得知 channel 關閉時，就很快的結束工作，這時效能會很好
+
+### 解答
+
+建議要先把上次程式中的 race 修掉再重新測試一下
+
+### 回應
+
+好的,謝謝您的建議,我再仔細檢查,不過能通過十萬協程的壓測,也有可能不是 race ，不然早就 panic 了,反正我再仔細檢查,謝謝您
+
+## 2022年6月30日
+
+### 測試中
+
+您說的沒錯，第三十行的 d.done 是 race
+
+用 golang 的 race 偵測去檢查，這是 race
+
+我有另一個觀點，如果就算這一行發生 race，也沒有關係
+
+因為 d.done 預設值為 false，所以 !d.done 的值預設為 true
+
+所以這整段來看，預設就是進行等待
+
+```go
+if !d.done {
+	d.wait.Wait()
+}
+```
+
+當 race 發生時，d.done 突然被改成 true，但這一段讀取 d.done 的值為 false，這個值是錯的，沒有差，因為協程還是在等待的狀態
+
+也就是這個原因，golang 的 race 偵測指出程式有問題，但是去跑基準測試時反而沒有問題
+
+這是因為 golang 的 race 偵測只檢查 d.done 是不是同時寫入讀取，但是它不管整個程式邏輯
+
+<img src="../assets/image-20220714055628083.png" alt="image-20220714055628083" style="zoom:100%;" />
+
+再來，這次實驗其實有個盲點，在跑測試時會有一個問題，編譯器會進行優化，編譯器在優化時，會影響實驗數據所以執行基準測試時，不只機器溫度要控制，連編譯器優化的功能也要關閉，因為這些都會影響跑出來的數據
+
+以這次例子來說，編譯器有沒有進行優化我還不知道，我就急著幫整個程式進行優化，
+
+```go
+if !d.done {
+  d.wait.Wait()
+}
+```
+
+這一段其實是我為了性能考量所寫的，因為能減少等待就減少等待，但是這會影響跑出來的數據
+
+總而言之，我同意您的說法，第三十行的 d.done 要去掉，為了數據的客觀性，謝謝
+
+## 2022年7月7日
+
+### 問題
+
+1 謝謝您，您說的是對的，當把所有 第 30 行讀取 d.done 都移除後，cond 的版本效能會下降
+
+就跟一開始預期的結果一樣，wait 效能 > rwmux > cond
+
+2 前一個版本效能會不符合預期是因為我都在用 第 30 行讀取 d.done 去躲開上鎖
+
+3 最後結論是能像 wait 版本都不上鎖的話，效能是最好的，其他的話就要看寫法了，有的寫法是 rwmux 效能較好，有的寫法是 cond 效能較好
+
+4 前一個版本就算有 race ，結果也是正確的，因為只要答案是錯的，程式會直接 panicif d.value != 1 {    panic("error" + fmt.Sprintln(d.value))}
+
+5 圖中的數據結果單位為 ns/op
+
+<img src="../assets/image-20220714060606116.png" alt="image-20220714060606116" style="zoom:80%;" /> 
+
+### 解答
+
+可以看一下文件中的 Incorrect synchronization 範例 [https://tip.golang.org/ref/mem](https://tip.golang.org/ref/mem?fbclid=IwAR2jbGDfSNp4kfSvDA5qTOIYL1R1V0UWp4BQFkxp45Dv7cRRAiLwi9I4wQE)
