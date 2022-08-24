@@ -1229,3 +1229,59 @@ if !d.done {
 ### 解答
 
 可以看一下文件中的 Incorrect synchronization 範例 [https://tip.golang.org/ref/mem](https://tip.golang.org/ref/mem?fbclid=IwAR2jbGDfSNp4kfSvDA5qTOIYL1R1V0UWp4BQFkxp45Dv7cRRAiLwi9I4wQE)
+
+## 2022年8月4日
+
+### 問題
+
+我為了了解 Redis 的叢集，把整個 Redis Cluster 的封包倒出來看
+
+(1) Redis Cluser 是基於 udp 和 tcp，我先過濾 udp 封包，只剩 tcp 的封包
+
+(2) 但是會發現一個很不正常的現在，節點之間會不停的用 tcp 去進行連線，問題是節點的資料都已經收斂了，一直用 tcp 連線不是在浪費連線
+
+這現象不是很合理？
+
+(3) 直接去查 Gossip 協定的模型，有提供兩個公式，全部是以病毒傳播進行理解
+
+(4) 第一個公式 Pi+1 = pi (1-1/n) ^ n(1-pi)，是指在病毒傳播下的存活率
+
+有多少次方代表有多少人 n(1-p) 中毒，成為傳播者
+
+(1-1/n) 為和人接觸的機率，除了自己以外
+
+p1 為現在的存活率
+
+整個公式看起來很合理，這是真實世界的公式，這公式允計病毒傳播可以失誤，而且收斂速度慢很多
+
+和大家想像的病毒傳播速度差很多，因為這個公式是以 RT 值為1 時，去進行計算模型應以這個公式訂為下界
+
+(5) 第二個公式 pi+1 = pi * pi ，這個公式我不能理解，但可以在紙上計算，這個公式收斂的速度很快
+
+有可能是作者想像中的病毒傳播的存活機率公式
+
+上一個公式病毒還可以傳播失敗，要達到這個公式的收斂速度，病毒傳播不能失敗但現實的狀況是不可能，因為可以對方早就中毒了
+
+(6) 當初在實作 gossip 協定的人，並無法達到第二個公式的收斂速度，那怎麼辨？就用大量的連線去接進第二個公式
+
+所以今天或者是未來，Redis Cluser 一定會有節點數的限制，很難在突破，如果要突破，就是跟模型進行挑戰
+
+(7) 請教您有沒有什麼方法可以擴展節點數，而且能維持一樣的收斂速度？我是偏向不挑戰模型，謝謝
+
+## 2022年8月18日
+
+### 問題
+
+Redis Cluster 的 Gossip 協定做的很精簡，因為 Redis 不能跨區跨分區，最好 Cluster 就在一個區網內，不然我找不到合理的解釋了
+
+<img src="../assets/image-20220825041631496.png" alt="image-20220825041631496" style="zoom:100%;" /> 
+
+[參考文件](https://l.facebook.com/l.php?u=http%3A%2F%2Fbitsavers.trailing-edge.com%2Fpdf%2Fxerox%2Fparc%2FtechReports%2FCSL-89-1_Epidemic_Algorithms_for_Replicated_Database_Maintenance.pdf%3Ffbclid%3DIwAR1QfLQPOEYalvpKlYDs5_tX6RlU6iQnLWKe8WbfotXejF4iDawEfzRsf1w&h=AT3WA3i2fsNPHtw0pkJaziojdDr7_53nsbGMlpDx_2FezIFcGQnf83fe-cn8AtC2VoU9baomcp4BA2EpqtYlkqgkr7yNscMteu38E7virWMw8cl3gCxgaFYbLc2c&__tn__=R]-R&c[0]=AT2PH43SMmfg_cya5iCMIKM4Gki_BKm9Td1jIBZtes8YOGknnDRtoeoSZMYUJdPheF5zXgZsQx-lSsOh7sZFY9hmmt0juQNqdB9Rsq8wGUcHndXXvDFoNmDAxuamuCS-QOZ44miRQ0jRpWH4j6HKr-NUlKQfsed16PFNZQ_YMfPqRTXVXBfg3RK2R8trGq_DcauFIvWcLSF4mXj_lQGyvIKrKkMNFse3zTjSqc0iremXbG9evaYD)
+
+Gossip 協定有二種模式，一為用 tcp 去實現 Anti-entropy，用 udp 去實現 Rumor，今天 Redis 的文件沒特別說明 Anti-entropy ，Rumor 又做在心跳裡，Redis 的 Gossip 機制太精簡了
+
+<img src="/home/panhong/.config/Typora/typora-user-images/image-20220825042152440.png" alt="image-20220825042152440" style="zoom:100%;" /> 
+
+我的之前的假設應該算是合理的
+
+<img src="/home/panhong/.config/Typora/typora-user-images/image-20220825042306681.png" alt="image-20220825042306681" style="zoom:100%;" /> 
