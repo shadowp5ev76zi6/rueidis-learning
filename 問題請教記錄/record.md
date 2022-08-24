@@ -1280,8 +1280,8 @@ Redis Cluster 的 Gossip 協定做的很精簡，因為 Redis 不能跨區跨分
 
 Gossip 協定有二種模式，一為用 tcp 去實現 Anti-entropy，用 udp 去實現 Rumor，今天 Redis 的文件沒特別說明 Anti-entropy ，Rumor 又做在心跳裡，Redis 的 Gossip 機制太精簡了
 
-<img src="/home/panhong/.config/Typora/typora-user-images/image-20220825042152440.png" alt="image-20220825042152440" style="zoom:100%;" /> 
+<img src="../assets/image-20220825042152440.png" alt="image-20220825042152440" style="zoom:100%;" /> 
 
 我的之前的假設應該算是合理的
 
-<img src="/home/panhong/.config/Typora/typora-user-images/image-20220825042306681.png" alt="image-20220825042306681" style="zoom:100%;" /> 
+<img src="../assets/image-20220825042306681.png" alt="image-20220825042306681" style="zoom:100%;" /> 
