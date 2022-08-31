@@ -431,6 +431,145 @@ Root bool
 
 它單純是個 code generator 用來生產 rueidis 的 command builder
 
+## 2022年5月12日
+
+### 問題
+
+請教您一個問題，如果 gen.go 的程式碼用遞迴函式去處理，您覺得適合嗎？
+
+```go
+package main
+
+import "fmt"
+
+// 主程式
+func main() {
+	// 產生 demo 節點物件
+	node := generateDemoNode()
+	Build(node)
+}
+
+func Build(node *node) {
+	node.Accept()
+}
+
+// 節點
+type node struct {
+	FullName string
+	Parent   *node
+	Child    []*node
+}
+
+func (n *node) Accept() (*node, bool) {
+	v := visitor{}
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	for _, next := range n.Child {
+		next.Accept()
+	}
+
+	return v.Leave(newNode)
+}
+
+// 參考者
+type visitor struct {
+	parent *node
+}
+
+func (v *visitor) Enter(in *node) (*node, bool) {
+	for i := 0; i < len(in.Child); i++ {
+		in.Child[i].Parent = in
+	}
+	fmt.Println("type " + in.FullName + " Completed")
+
+	return in, false
+}
+
+func (v *visitor) Leave(in *node) (*node, bool) {
+	if in != nil {
+		if in.Parent != nil {
+			fmt.Println(in.Parent.FullName + " -> " + in.FullName)
+		}
+		return in, false
+	}
+
+	return in, true
+}
+
+// 產生 demo 節點物件
+func generateDemoNode() *node {
+	setUserNode := &node{
+		FullName: "AclSetuser",
+		Parent:   nil,
+		Child:    nil,
+	}
+
+	setRuleNode := &node{
+		FullName: "AclSetuserRule",
+		Parent:   nil,
+		Child:    nil,
+	}
+
+	setUserNameNode := &node{
+		FullName: "AclSetuserUsername",
+		Parent:   nil,
+		Child:    nil,
+	}
+
+	a := &node{FullName: "A"}
+	b := &node{FullName: "B"}
+	c := &node{FullName: "C"}
+	setUserNode.Child = append(setUserNode.Child, setUserNameNode, a, b, c)
+	setUserNameNode.Child = append(setUserNameNode.Child, setRuleNode)
+
+	return setUserNode
+}
+```
+
+後來我看了程式碼，覺得或許可以用 AST 遞迴函式去處理
+
+有時會常看到 AST 遞迴函式，卡西哥就貼過一次
+
+我看過二次了，AST 遞迴函式會有三個地方可以控制，彈性我覺得很夠，分別為
+
+進入節點的 Enter 函式
+
+中間處理函式 Accept 函式
+
+離開節點的 Leave 函式
+
+方向也很有彈性，可以由 Parent 節點進入 Child 節點去操作，也可以反向，由 Child 節點進入 Parent 節點
+
+另外，如果是產生程式碼的程式，最後一定會有吐檔動作，產生程式碼
+
+但是 AST 遞迴函式 可以把吐檔工作都分配到各個節點，每個節點會有寫檔動作
+
+程式的執行結果
+type AclSetuser Completed
+type AclSetuserUsername Completed
+type AclSetuserRule Completed
+AclSetuserUsername -> AclSetuserRule
+AclSetuser -> AclSetuserUsername
+type A Completed
+AclSetuser -> A
+type B Completed
+AclSetuser -> B
+type C Completed
+AclSetuser -> C
+(意思為 AclSetuser 物件會有方法產生 AclSetuserUsername 物件
+而 AclSetuserUsername 物件 也會有方法產生 AclSetuserRule 物件)
+
+AST 遞迴函式對於個性比較保守的人會比較喜歡使用，因為程式碼彈性很高
+
+而且它有自動補齊節點資料的功能，當我發現節點參數不足時，就在 Enter 進入函式時，就開始去修正或補齊節點資料
+
+那請問如果用這方法去寫 gen.go，您覺得可能會遇到什麼問題？謝謝
+
+<img src="../assets/image-20220901064105188.png" alt="image-20220901064105188" style="zoom:100%;" /> 
+
 ## 2022年5月19日
 
 ### 問題
