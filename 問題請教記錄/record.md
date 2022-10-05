@@ -1424,3 +1424,35 @@ Gossip 協定有二種模式，一為用 tcp 去實現 Anti-entropy，用 udp �
 我的之前的假設應該算是合理的
 
 <img src="../assets/image-20220825042306681.png" alt="image-20220825042306681" style="zoom:100%;" /> 
+
+## 2022年9月1日
+
+### 問題
+
+其實有花一些時間去找 redis 的模型，redis 的演算法源頭是 Paxos 演算法，有些人可能會認為找模型沒有必要，但是未來電費可能會愈來愈貴，也要在停電時找一些事來做
+
+以下是我所認為的 Paxos 模型，說不定再不久就能找到 redis 的模型了
+
+理論上來說，整個模型都達到共識值 n 時，就再也不會接受值 v 了，所以共識值 w 也不存在
+
+實務上來說，acceptor 只能接受一個建議編號，萬一用 go routine 惡意突破時，整個模型也只接受之前的共識 n
+
+<img src="../assets/image-20221006072256345.png" alt="image-20221006072256345" style="zoom:100%;" /> 
+
+## 2022年9月8日
+
+### 問題
+
+[http://www.cs.toronto.edu/....../handouts/paxos-proof.pdf](http://www.cs.toronto.edu/~samvas/teaching/2415/handouts/paxos-proof.pdf?fbclid=IwAR27KQhYVFmU21sqm7aKMSl7SV-Nt3h7lRj5nUhd6iTuNYIBdl8R3vW7JSI)
+
+其實這是多倫多大學對於共識演算法證明，我也不能全抄，所以加上自己的見解
+
+我再做一個假設，哨兵大部份會放在 slave 結點上，我懷疑
+
+Sentinel 的共識演算法是做在 slave
+
+Cluster 的共識演算法是做在 master
+
+### 解答
+
+sentinel 是獨立於 redis 的另外一組 cluster，一般是沒放在 slave 節點上
