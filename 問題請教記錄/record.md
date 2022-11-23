@@ -1369,6 +1369,68 @@ if !d.done {
 
 可以看一下文件中的 Incorrect synchronization 範例 [https://tip.golang.org/ref/mem](https://tip.golang.org/ref/mem?fbclid=IwAR2jbGDfSNp4kfSvDA5qTOIYL1R1V0UWp4BQFkxp45Dv7cRRAiLwi9I4wQE)
 
+## 2022年7月21日
+
+### 問題
+
+我有看到程式內有 slots 陣列，會記錄 redis cluster 16384 個 slots 分佈，
+
+shouldRefreshRetry 函式會去更新 slots 陣列，當更新完成後，程式就知道最新的 slots 分佈，就可以對 redis cluster 進行操作，之後就可以用一行 DoCache 函式執行結束
+
+請教一下，為何後面還要再用 switch 進行處理，還要分 RedirectMove RedirectAsk RedirectRetry 三個不同的 cases？ (黃色標示的地方)
+
+<img src="../assets/image-20221124041708679.png" alt="image-20221124041708679" style="zoom:80%;" />
+
+### 解答
+
+https://redis.io/docs/reference/cluster-spec/#redirection-and-resharding
+
+### 問題
+
+其實把上星期的模型和您所建議的官方文件進行對照，我是這樣想的
+
+第一個公式 Pi+1 = pi (1-1/n) ^ n(1-pi) 這個公式是用來 Push，是用來隨意傳播病毒
+
+第二個公式 pi+1 = pi * pi 這個公式是用來 Pull，是故意到中毒人的面前去感染病毒
+
+為何我認為第二個公式是故意的，因為在正常的速度下，收斂不會這麼快，除非故意
+
+原本，實作的人，是要用 tcp 去實作第二個公式，用 udp 去實作第一個公式
+
+但是實作的人後來發現，udp 也可以用來存放 gossip session 的資料，竟然心跳要做，就順便連 gossip 資料一起傳出去
+
+但是 udp 是用來隨意傳播病毒，不是故意讓別人中毒，很難逼近第二個公式的收斂速度，那就一次傳三個封包出去，去增加傳播的速度，這樣就能接近第二個公式
+
+官方文件有說 redis 的 gossip 資料有放在 udp 的封包裡
+
+有時知道理論，就可以明白什麼事可以做，什麼事不能做，但是有時會愈讀愈不明白，後來我就想這個推理去解釋
+
+那請教您，您認為 redis gossip 協定，是要用 udp ？ 還是 tcp ？ 還是兩個都用 ？ 去進行實作比較好，謝謝
+
+### 回答
+
+Gossip 跟 UDP/TCP 沒有什麼關聯的，用哪個都可以
+
+### 問題
+
+(1) 我看了您提供的文件的前半段，了解到會有 RedirectMove 和 RedirectAsk 的這兩個 case，主要是因為 redis 的 slot 要進行遷移
+
+(2-1) 而 RedirectMove 的 case 是指該 key 跟著 slot 遷移到新結點完成，資料在最終目的節點
+
+(2-2) 而 RedirectAsk 的 case 是指該 key 在遷移到新節點中，目前資料在原來的舊節點
+
+(3-1) redis 只允許 slot 資料在同一個節點，那不就是維持 CAP 中的一致性 Consistency (資料只有一份，當然一致)
+
+(3-2) 官方文件有說不能保證 redis cluster 資料不會遺失，那可用性也沒了 Availability (官網用節點故障重啟為例)
+
+(3-3) 分區容錯性也沒有啊，slot 資料只在一個結點 (資料只有一份，那裡來的分區容錯性)
+
+(4) 了解程式碼後，發覺整個 CAP 只剩下一個 Consistency，那做叢集的目的並不是在備份資料，看起來只是為了提高承載量
+
+(5) 請教一下，把 Redis 在遷移 Slot 的動作，解釋成在維持 CAP 的一致性，我是不知道這說法對不對？謝謝
+
+![image-20221124042501100](../assets/image-20221124042501100.png)
+
 ## 2022年8月4日
 
 ### 問題
