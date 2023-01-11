@@ -1369,6 +1369,50 @@ if !d.done {
 
 可以看一下文件中的 Incorrect synchronization 範例 [https://tip.golang.org/ref/mem](https://tip.golang.org/ref/mem?fbclid=IwAR2jbGDfSNp4kfSvDA5qTOIYL1R1V0UWp4BQFkxp45Dv7cRRAiLwi9I4wQE)
 
+## 2022年7月14日
+
+### 問題
+
+您上次建議這篇 [https://tip.golang.org/ref/mem](https://tip.golang.org/ref/mem?fbclid=IwAR0m_yDdfr96p-b3y4O3PxXFiSqidDxQmbNbWPIgQF5gDwVfmoLa75hvf0A)，我閱讀之後覺得很震驚
+
+以圖中的例子，一開始來看，覺得並不是 race ，但是事實上，這程式不安全我覺得主要的原因是編譯器可能會重編，改變順序
+
+在複雜的例子，可能編後的結果 done = true 會比 a = "hello, world" 先執行完成
+
+有人會問，為何有人會要寫程式會有 race ？
+
+這是因為要用 race 去反而增加一些效能比如有五個協程，如果有二個較不重要的協程，不限制 race ，效能反而會上升
+
+但是看了這篇文章，我覺得用 race 換效能的行為太危險了，因為編譯器的行為是我無法掌握的
+
+所以以後，只要 race 偵測測出問題，就判定程式是錯誤的，最後，謝謝您，您說的是對的
+
+![image-20230112031450002](../assets/image-20230112031450002.png) 
+
+文章用的是 observe 這個字，我要去確認背後的含意我再想想有沒有什麼例子，編譯後，done = true 會比 a = "hello world" 先執行完成
+
+您認為是什麼原因呢？謝謝您
+
+### 解答
+
+大部分都跟 CPU 各別架構有關，[https://en.wikipedia.org/wiki/Memory_ordering](https://en.wikipedia.org/wiki/Memory_ordering?fbclid=IwAR3ob-YcpzXn_E0SQt8G0cFcBLlnPz4YIug9LLYd06s93wPikjB0CwbmRZE)，軟體需要依賴在硬體提供的 Memory Ordering Guarantee 才能正確運行
+
+### 問題
+
+我查一些資料， Golang 提供的 channel 、 lock 和 atomic 可以維持程式執行順序
+
+那不就是除了 channel 、 lock 和 atomic 之外，程式執行的順序是不能被保證的
+
+不過關於 atomic 的 Memory Ordering Guarantee 是比較爭議的，我再去查資料
+
+### 解答
+
+就在同一份文件有說明喔 [https://tip.golang.org/ref/mem#atomic](https://l.facebook.com/l.php?u=https%3A%2F%2Ftip.golang.org%2Fref%2Fmem%3Ffbclid%3DIwAR3NxbuWJYxcHEkAH9jayMkEUCS7JyhuZX8eIMNW4c7WG0bhMXkhNvs9NNo%23atomic&h=AT089Q-3qjHPlLhc_Z9EXakzIhMPzq_xTv-segUsVS0-z-PfOgxzKSlcCjOgEJkreSUUOPA1mrK9_j5aSaSyxbM8j12BSFR9vdtRRBC6MWynmWHAHRI7LR9tknx9&__tn__=R]-R&c[0]=AT2fqQ2c4b-uAD5AumtDfS4fDuvHobpacjX8v4_9r0UQs_ndGk4bOsLnerOpJMFWlPz82UW6xnlsUPL4DEijVojwJjk3kujWp5VC5ravnux8leMZRjRyjge2o24nrP7m9523JQpR7zBvKiU041PpQ23SVJ7RgNoOg5XBCsL11jZxOgBcx2WgZC7BDam-azpmbqTtvSi-P-2RQqN9HU-H-AMQdDFpDz8xdFimXFgcMw8JjJ2zxRCIFXiV)
+
+### 問題
+
+了解，謝謝，今天 atomic 保證 Memory Ordering，應該是硬體支援，萬一有一些硬體架構不支援？不知道我想我是沒差，我都是用老古董電腦
+
 ## 2022年7月21日
 
 ### 問題
@@ -1654,3 +1698,178 @@ uber 的 goroutine leak 我是用過，最後還是加在 makefile 裡，但是 
 但是因為被 gc 干擾，所以測出來的數據為高估值比如 go routine 是 700 ms 消散，但是實際上可能是在 685 ms 就消散了
 
 <img src="../assets/image-20221124055235734.png" alt="image-20221124055235734" style="zoom:100%;" />
+
+## 2022年10月13日
+
+### 問題
+
+請教是什麼原因，會讓您減少 goroutine 的數量？藍色的地方如果用 i = 0，看起來合理，為何要改成 1？謝謝
+
+<img src="../assets/image-20230112024000069.png" alt="image-20230112024000069" style="zoom:80%;" /> 
+
+### 解答
+
+如果 len(ch) == 1 就不想多開 goroutine 了
+
+### 問題
+
+GoRoutine 的數量和效能的關係應為協程之間等待的時間愈長，所需要的 GoRoutine 數量就愈多，您有使用 single flight ，這代表協程之間是有等待的時間，所以需要增加 GoRoutine 數量去提升效能
+
+以下圖真實數據為例，橫軸為等待的微秒數，縱軸為 GoRoutine 的數量，成穩定的線性成長
+
+當然因為 CPU 的核心為固定的，不可能永遠穩定的線性成長，一定會有它的極限
+
+程式可能有可以利用增加 GoRoutine 數量去提升效能的地方，可能在其他地方吧，想了一個星期要如何去估計 GoRoutine 的數量
+
+<img src="../assets/image-20230112025059125.png" alt="image-20230112025059125" style="zoom:80%;" /> 
+
+其實我在猶豫，這裡雖然只有時只有一個 channel，但是 GoRoutine 的數量要和等待時間成正比
+
+程式有使用 single flight 就會產生等待時間，我是覺得可以把 GoRoutine 的數量增加
+
+我在仔細想想好了，寫程式時，我也會遇到這個問題，謝謝您
+
+### 問題
+
+(1) 如果一直依造 go routine 的數量要根據 go routine 的等待時間而定的話，您提到的 len(ch) == 1 那附近有一層 go routine ，single flight 又有一層，這樣形成雙層 go routine  (雙層 go routine 會減少 go routine 之間的等待時間，因為在短時間內急著製造 go routine)，這時 go  routine 的數量稍微下降，就可以獲得較好的性能
+
+(2) 您提到 len(ch) == 1 就不想多開 goroutine，如果不能由多開 goroutine 提升效能的話，我覺得是好事，因為這樣代表 sigle flight 裡的 go routines 之間等待時間很短
+
+(3) 我只是提一下我所認為較合理估計開 go routine 數量的方法，您覺得這合理嗎？之前，看大家討論，有些說很難估，但我想還是要找辨法估出來，不然寫程式會茫茫然的
+
+測試程式在這
+
+``````go
+package main
+
+import (
+	"sync"
+	"testing"
+	"time"
+)
+
+func Benchmark_GoRoutineLimit(b *testing.B) {
+	chanA := make(chan int, 10000)
+	chanB := make(chan int, 10000)
+
+	for i := 0; i < 10000; i++ {
+		chanA <- i
+	}
+
+	count := 160
+	for i := 0; i < b.N; i++ {
+		wg := sync.WaitGroup{}
+		wg.Add(count)
+
+		from := chanB
+		to := chanA
+
+		if len(chanB) == 0 {
+			from = chanA
+			to = chanB
+		}
+		for j := 0; j < count; j++ {
+			go func() {
+			LOOP:
+				for {
+					select {
+					case data := <-from:
+						to <- data
+					default:
+						wg.Done()
+						break LOOP
+					}
+					time.Sleep(25 * time.Microsecond)
+				}
+			}()
+		}
+		wg.Wait()
+	}
+}
+
+func Benchmark_GoRoutineLimit_2layers(b *testing.B) {
+	chanA := make(chan int, 10000)
+	chanB := make(chan int, 10000)
+
+	for i := 0; i < 10000; i++ {
+		chanA <- i
+	}
+
+	count := 200
+	for i := 0; i < b.N; i++ {
+		wg := sync.WaitGroup{}
+		wg.Add(count)
+
+		from := chanB
+		to := chanA
+
+		if len(chanB) == 0 {
+			from = chanA
+			to = chanB
+		}
+		for j := 0; j < count/5; j++ {
+			go func() {
+				for k := 0; k < 5; k++ {
+					go func() {
+					LOOP:
+						for {
+							select {
+							case data := <-from:
+								to <- data
+							default:
+								wg.Done()
+								break LOOP
+							}
+							time.Sleep(25 * time.Microsecond)
+						}
+					}()
+				}
+			}()
+		}
+		wg.Wait()
+	}
+}
+``````
+
+我一直調 count (go routine 的數量) 找到可以達到最佳效能的 go routine 數量
+
+<img src="../assets/image-20230112030136622.png" alt="image-20230112030136622" style="zoom:80%;" />  
+
+### 解答
+
+之前說 len(ch) == 1 不想多開 goroutine 是因為與其讓原本的 goroutine 只做 wg.Wait，不如少開一個然後原本的也一起消化 ch。
+
+至於你問的怎麼估計要開多少 goroutine：如果你是想在 user code 做可以自動調節數量 goroutine pool 的話，我覺得可以參考 Exploration vs Exploitation 等自動優化的做法
+
+### 問題
+
+(1)最一開始，我是有一種想法，之前有做一個決定，就是以後有開啟 GoRoutine 的地方，數量就是由兩個值決定，由主程式的 const 變數定上限，設定檔再定修正值，這兩個值相減，就是 GoRoutine 的數量，以後所有 GoRoutine 的地方，但會個別配有這兩個值
+
+(2)這做法有一個缺點，就是這兩個值很難觀察，很難定出來，剛好您提到 goroutine pool 和 Exploration vs Exploitation 就可以解決這些缺點
+
+(3)但是並不是每一個有 GoRoutine 的地方都要 GoRoutine Pool，但我覺得這兩個值還是一開始就要寫出來，
+
+因為，程式的性能和 CPU 核心數成正比，有更多個核心才能處理更多的 GoRoutine，一開始就把上限用 Benchmark 壓出來，
+
+(4)之後，一台機器的程式會愈上愈多，會有別的程式和這隻程式干擾或搶資源，CPU 能處理我程式的 GoRoutine 的機會也愈來愈少，也開始要用設定檔的設定值開始下修
+
+(5)之後要不要接 GoRoutine 再說，但是一開始先把這兩個值做出來，將能給程式較大的彈性，這是我之前的心得和決定
+
+那您覺得有必要，所有 GoRoutine 的地方，個別配有這兩個值？謝謝您
+
+### 解答
+
+我覺得能自動持續調節的 goroutine pool 會比較好，畢竟就像你說的，那兩個 const 根本不知到要設定多少
+
+
+
+
+
+
+
+
+
+
+
+
+
