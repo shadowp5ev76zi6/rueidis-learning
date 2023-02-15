@@ -1699,6 +1699,24 @@ uber 的 goroutine leak 我是用過，最後還是加在 makefile 裡，但是 
 
 <img src="../assets/image-20221124055235734.png" alt="image-20221124055235734" style="zoom:100%;" />
 
+## 2022年10月6日
+
+### 問題
+
+當我第看到您的專案，我有一個感覺，技巧用的很多而且密度很高，這對我來說是好機會，我可以從中參考，看看有什麼技巧我也可以學起來使用
+
+請教您一個問題，我再看記錄時，在 rueidiscompat 包裡，發現您有做一個 adapter，但是做出來後，沒有大量使用？不清楚目的為何？
+
+rueidiscompat 中的 compat 應是指相容的意思，但還不是很清楚？
+
+謝謝
+
+<img src="../assets/image-20230216035810115.png" alt="image-20230216035810115" style="zoom:80%;" /> 
+
+### 解答
+
+是的，rueidiscompat 是由 418Coffee 貢獻的，讓人可以更容易得從 go-redis 轉到 rueidis [https://github.com/rueian/rueidis......](https://github.com/rueian/rueidis?fbclid=IwAR2yaqb9p-H_8QOrKxjK1VwkxQKjbk9_woo32gDYUJi59iDfzLF5KMCfc-Y#high-level-go-redis-like-api)
+
 ## 2022年10月13日
 
 ### 問題
@@ -1860,6 +1878,96 @@ func Benchmark_GoRoutineLimit_2layers(b *testing.B) {
 ### 解答
 
 我覺得能自動持續調節的 goroutine pool 會比較好，畢竟就像你說的，那兩個 const 根本不知到要設定多少
+
+## 2022年11月10日
+
+### 問題
+
+(1) GC 問題一直很頭痛，像我上次寫的一個小程式去測 GoRoutine 消散的問題，最後是覺得 GC 的會影響消散的準確性，
+
+後來想想，要解決GC問題，小程式的話，就關閉GC，大程式的話，就用 sync.Pool，以我的狀況，像測 GoRoutine 消散的問題，是小程式，那就直接關閉 GC
+
+(2) 我有一個疑惑，我是覺得算是不錯的問題想請教您和您討論，我覺得這問題算是不錯，我有些問題不太好
+
+(3) 大部份的狀況，字串一開始會放在可讀區，我認為 Go 語言這樣做，可以提高高拼發時的穩定性
+
+(4) Go語言 GC 只針對 Heap 進行回收，不過以 BinaryString 這個函式，一開始 []byte 資料一放在 stack 或者是 heap，
+
+用 BinaryString 直接把 []byte 直接轉成 字串，如果在加上編譯器發生逃逸現象，我是覺得發生逃逸現象的機會很大，
+
+[]byte 資料就直接移入 heap，這時就會給GC的壓力很大，您覺得我說法是否正確？謝謝
+
+(5) 另外，時間有點晚了，昨天解另一個問題解一整天，還沒解出，Golang 很深奧
+
+### 解答
+
+你說的對，逃逸就會造成 GC 壓力。不過 BinaryString 這個函式應該不會是 []byte 是否逃逸的原因
+
+### 問題
+
+(1) 上星期是這樣想的，[]byte 資料一開始會放入 stack 式 heap，只要進入 heap 就會給 GC 壓力
+
+(2) 這星期把問題簡化，數據量大的 []byte 較有機會進入 heap ，小的會進入 stack，先假設都規劃好了，Redis 回傳的資料都是較小的資料，那 切片 []byte 就會優先進入 stack
+
+(3) 切片 []byte 就會優先進入 stack 的狀況下，發生函式執行結束，Stack 棧體要進行回收，那這時 切片 []byte 要移入 heap 還是 唯讀數據區 RODATA？萬一是 heap 那 GC 壓力就會大了
+
+我內心想法，今天如果我要使用這函式 BinaryString，我的限制會很多
+
+1 切片 []byte 不會被修改，保持 go string 唯讀的特性
+
+2 想辨法把 BinaryString 回傳的字串就和其他 string 合拼，合成新的字串，資料複制到 唯讀數據區 RODATA，當函式結束後 切片 []byte 就直跟隨著棧體一樣被回收而消失
+
+<img src="../assets/image-20230216041045371.png" alt="image-20230216041045371" style="zoom:80%;" /> 
+
+### 解答
+
+你可能誤會了這個 BinaryString 的用途。
+
+通常是當你手上已經有 []byte 想要傳進 Redis Client 才會用這個 function。Redis Client 回傳的已經是 string 了。
+
+此外並不會在棧體會收前把資料移入 heap。它會一開始就在 heap。
+
+### 問題
+
+了解，謝謝您，我想您是指編譯器一開始就會決定把資料放進 heap ，所以才不會在棧體回收前移入的狀況發生
+
+如果在沒有惡意的前提下，有些人會使用 []byte 操作而不用 string 進行操作，因為 string 的效能比較慢
+
+請教您，您是特別為這些用戶特別寫出這功能嗎？
+
+另外，我再仔細看您的註譯，您有提到當讀取 Redis 傳回的 string，建議用 RedisMessage.AsReader
+
+string 和 []byte，差在 string 沒有 cap 容量大小的資料，如果能由 string 長度而知道 cap 容量大小 不就是有機會可以直接轉回 []byte ？
+
+那為何要使用 RedisMessage.AsReader？謝謝您
+
+### 解答
+
+對，很常有需要把 []byte 存進 redis 然後再讀出來。這樣用 BinaryString 以及 AsReader 可以避免 []byte 跟 string 轉換需要的複製
+
+### 問題
+
+不好意思，上星期我沒說清楚，我指的補齊容量直接轉的意思如下圖，而且這樣性能接近 CPU到寄存器的距離
+
+<img src="../assets/image-20230216041721518.png" alt="image-20230216041721518" style="zoom:80%;" /> 
+
+如果是用 Reader ，最少最少會花費CPU到記憶體的時間，最少要花掉200至300奈秒，當字串愈長，就如下圖了
+
+而且在使用 io.ReaaAll 會有 buffer 起來，也會有複制的現象，我還在想各種不同用法的使用時機？謝謝您
+
+<img src="../assets/image-20230216041926720.png" alt="image-20230216041926720" style="zoom:80%;"/>   
+
+### 解答
+
+對，這種不用複製直接 string -> []byte 的做法我自己也常用。但它破壞 immutable string 的特性，所以不會放進 library 中
+
+### 問題
+
+您看看我做的表格是否合理？謝謝您Benchmark 我是用 5000 bytes 資料去做測試的
+
+<img src="../assets/image-20230216042234324.png" alt="image-20230216042234324" style="zoom:80%;" /> 
+
+
 
 
 
