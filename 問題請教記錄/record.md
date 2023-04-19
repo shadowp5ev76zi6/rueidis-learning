@@ -1967,17 +1967,405 @@ string 和 []byte，差在 string 沒有 cap 容量大小的資料，如果能�
 
 <img src="../assets/image-20230216042234324.png" alt="image-20230216042234324" style="zoom:80%;" /> 
 
+## 2022年12月15日
 
+### 問題
 
+我想會使用 pipe 批量處理去增加效能，是因為TCP連線經過 (1)多syn一個ack (2)長連線 後 已經無法再優化了，所以最後只能朝 pipe 批量處理去優化，由官方文件中，[https://redis.io/docs/reference/clients/](https://redis.io/docs/reference/clients/?fbclid=IwAR16ZJRGQKGuxGmkDeyXiaErru8L7vIMFrDsBOwM-9gR8wfNnRzKklKcrSQ)，最後一段，TCP keepalive 就代表 redis 是使用長連線想來想去，想要再增加效能，只剩做長連線pool比如在 init 函式內，一次啟動5個長連線至redis，之後重複利用好處1，不會造成所有的命令集中在一個連線上好處2，逼 redis 使用多核去處理我的請求請教您會有計劃寫 長連線pool 嗎？謝謝
 
+### 解答
 
+已經有了喔，可以設定 PipelineMultiplex
 
+### 問題
 
+我看到您的一段程式碼，就來試著分析看看
+其中一段
+m.wire[slot].CompareAndSwap(wire, m.init)，wire 是為 interface，
+那就抽 interace 的源碼來看，以 convT64 為例，會在記憶體上開一個空間，進行轉型時，會把值記錄在這，
+就算 m.init 為 nil，也會在開一個空間記錄 wire 這個 interface
+當連線是 broken 時，m.wire 切片全部會指向 m.init 這個記憶體位置
+我是想您把 m.init 當成表示連線狀態來用？
+那您為何不用 const 和 iota 來表示連線狀態？謝謝您
+比如
+const (
+pipeInit = iota
+pipeBroken
+)
 
+![image-20230420054832436](../assets/image-20230420054832436.png)
 
+### 解答
 
+沒什麼特別的原因 兩者都可唷
 
+### 問題
 
+我對整個程式碼目前不是很了解，您使用CAS去改變 wire 狀態的方法我也想使用，
+所以我就寫了一個小型的程式去進行了解，
+mInit 為初始狀態
+mDead 為死亡狀態
+最後會變成 mInit 等於 mDead，意思為出生等於死亡，我是覺得不合理
+請教您，您覺得我這段程式是那裡有問題？謝謝您
+
+![image-20230420055347592](../assets/image-20230420055347592.png)
+
+### 解答
+
+mInit == mDead 是因為 (*MyStruct)(nil) == (*MyStruct)(nil)
+如果你要比地址的話應該是要用 &mInit != &mDead
+
+### 問題
+
+不過 (*MyStruct)(nil) 上面有星號指標，就是地址
+我當時就在想，會不會是有的時候，表面上程式寫的，但私底下程式不一定是這樣運作
+這也不是不可能，指針接收器的元素賦值就是一個例子
+謝謝您
+
+鎖有等級，如果換成較輕量的 CAS 也不錯，但是後來發現，如下圖，反而在因初始化這些狀態時，反而傷性能，數據如下
+Benchmark_Status
+Benchmark_Status/using_cas
+Benchmark_Status/using_cas-8 3446288 340.5 ns/op
+Benchmark_Status/using_lock
+Benchmark_Status/using_lock-8 7467360 166.3 ns/op
+您的程式才兩個狀態，一個為init，另一個為 dead ，所以這影響不明顯
+如果能在程式切換狀態時不上互斥鎖，改用CAS，我也願意，但是目前看起來不理想(如果別人說這樣程式會難讀，我就注譯寫清楚一點就好)
+請教您，您會不會在切換
+mInit初始狀態 和 mDead死亡狀態 時，考慮使用互斥鎖？效能也許會比較好，謝謝您
+
+![image-20230420055818053](../assets/image-20230420055818053.png)
+
+### 解答
+
+應該要把初始化搬到迴圈之外，另外應該要用 parallel benchmark 比較 synchronization 比較有意義
+
+### 問題
+
+用 CAS 去控制物件狀態是高難度，原因有
+1 互斥鎖可以承受高度競爭，但CAS不行
+2 每行程式執行順序不同，CAS無法去控制這問題
+3 效能目前看起來沒有比較好
+互斥鎖雖然把並聯操作成串聯，CAS沒有這個現象，要是我去選，也會選CAS，但是CAS也不是十全十美
+白天我再花時間去解釋我的理解，我先附上測試的程式碼
+原本也是以為CAS會比較好，後來發現會有這些問題，謝謝您
+程式碼
+
+```go
+package status
+
+import (
+	"log"
+	"sync"
+	"sync/atomic"
+	"testing"
+)
+
+const (
+	statusInit = iota
+	statusGroupUp
+	statusMature
+	statusWeak
+	statusDead
+)
+
+type MyInterface interface {
+	Set()
+}
+
+type MyStruct struct {
+	status atomic.Value
+	task   int
+}
+
+type MyStructStatus struct {
+	status int
+}
+
+func (receive *MyStruct) Set(mInit, mGrowUp, mMature, mWeak, mDead *MyStructStatus) {
+LOOP:
+	for {
+		switch receive.status.Load().(*MyStructStatus) {
+		case mInit:
+			if result := receive.status.CompareAndSwap(mInit, mGrowUp); result == true {
+				receive.task = receive.task + 1
+				break LOOP
+			}
+		case mGrowUp:
+			if result := receive.status.CompareAndSwap(mGrowUp, mMature); result == true {
+				receive.task = receive.task + 2
+				break LOOP
+			}
+		case mMature:
+			if result := receive.status.CompareAndSwap(mMature, mWeak); result == true {
+				receive.task = receive.task + 4
+				break LOOP
+			}
+		case mWeak:
+			if result := receive.status.CompareAndSwap(mWeak, mDead); result == true {
+				receive.task = receive.task + 8
+				break LOOP
+			}
+		case mDead:
+			break LOOP
+		default:
+			//
+		}
+	}
+}
+
+// 不使用
+/*func (receive *MyStruct) Set(mInit, mGrowUp, mMature, mWeak, mDead *MyStructStatus) {
+	for {
+		if receive.status.CompareAndSwap(mInit, mGrowUp) {
+			receive.task = receive.task + 1
+			break
+		} else if receive.status.CompareAndSwap(mGrowUp, mMature) {
+			receive.task = receive.task + 2
+			break
+		} else if receive.status.CompareAndSwap(mMature, mWeak) {
+			receive.task = receive.task + 4
+			break
+		} else if receive.status.CompareAndSwap(mWeak, mDead) {
+			receive.task = receive.task + 8
+			break
+		} else if receive.status.Load().(*MyStructStatus) == mDead {
+			break
+		}
+	}
+}*/
+
+type MyStruct2 struct {
+	status int
+	task   int
+	lock   sync.Mutex
+}
+
+func (receive *MyStruct2) Set() {
+	receive.lock.Lock()
+LOOP:
+	for {
+		switch receive.status {
+		case statusInit:
+			receive.task = receive.task + 1
+			receive.status = statusGroupUp
+			receive.lock.Unlock()
+			break LOOP
+		case statusGroupUp:
+			receive.task = receive.task + 2
+			receive.status = statusMature
+			receive.lock.Unlock()
+			break LOOP
+		case statusMature:
+			receive.task = receive.task + 4
+			receive.status = statusWeak
+			receive.lock.Unlock()
+			break LOOP
+		case statusWeak:
+			receive.task = receive.task + 8
+			receive.status = statusDead
+			receive.lock.Unlock()
+			break LOOP
+		case statusDead:
+			receive.lock.Unlock()
+			break LOOP
+		default:
+			//
+		}
+	}
+}
+
+var mInit = &MyStructStatus{0}   // 0
+var mGrowUp = &MyStructStatus{1} // 1
+var mMature = &MyStructStatus{2} // 2
+var mWeak = &MyStructStatus{3}   // 3
+var mDead = &MyStructStatus{4}   // 4
+
+// 五個參數
+func Benchmark_Status(b *testing.B) {
+	b.Run("using cas", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			person := MyStruct{}
+			person.status.Store(mInit)
+			wg := sync.WaitGroup{}
+			wg.Add(5)
+			for j := 0; j < 5; j++ {
+				go func() {
+					person.Set(mInit, mGrowUp, mMature, mWeak, mDead)
+					wg.Done()
+				}()
+			}
+			wg.Wait()
+			// time.Sleep(300 * time.Microsecond) // 加這一行，測試會通過，應是每行程式執行順序不同的原因
+			if person.task != 15 {
+				log.Fatal("error", person.task)
+			}
+		}
+	})
+	b.Run("using lock", func(b *testing.B) {
+		var person MyInterface = &MyStruct2{
+			status: 0,
+		}
+		for i := 0; i < b.N; i++ {
+			wg := sync.WaitGroup{}
+			wg.Add(5)
+			for j := 0; j < 5; j++ {
+				go func() {
+					person.Set()
+					wg.Done()
+				}()
+			}
+			wg.Wait()
+			if person.(*MyStruct2).task != 15 {
+				log.Fatal("error", person.(*MyStruct2).task)
+			}
+		}
+	})
+}
+
+```
+
+這是圖1(共有三張圖)，先做測試邏輯說明，這是測試的邏輯說明，所有的協程都會去進行 task 值的相加，最後 task 總合應要為 15，不然測試失敗
+原本是想，如果測試效果很好，就把這一套機制寫成一個 package，愈做愈精緻，不過目前是有些狀況
+鎖的學問大，Go 的鎖的種類應有 5 6 種，也算是值得討論
+
+![image-20230420060406672](../assets/image-20230420060406672.png) 
+
+圖2(共有三張圖)為我所認為的 CAS 的缺點，在執行CAS的過程中，會和迴圈一起配合，如果協程數量一多，程式因處理大量迴圈反而會傷性能
+
+![image-20230420060557037](../assets/image-20230420060557037.png) 
+
+圖3(共有三張圖)為我所認為的 CAS 會遇到的另一個問題，程式執行的順序不會依照我想像中的順序去執行，如果使用 CAS 去控制物件狀態，這個問題會變的更嚴重
+看來看去，除非是今天 CAS 在這方面，效能 比 互斥鎖好太多，我才會冒險使用 CAS
+互斥鎖把並聯問題改成串聯，我也不是很喜歡，但為了要躲互斥鎖，反正製造二個新問題，可能划不來
+另一個問題是，進行測試，CAS的效能也沒有好多少，差距不大
+請教您，您覺得我所認為的 CAS 的兩個缺點，可解嗎？謝謝您
+
+![image-20230420060729918](../assets/image-20230420060729919.png) 
+
+### 解答
+
+你應該要用 atomic 操作 person.task 不然都會是錯的
+
+```go
+package main
+
+import (
+	"math"
+	"sync"
+	"sync/atomic"
+	"testing"
+)
+
+type ss struct{ v int64 }
+
+var status = []*ss{nil}
+var sum int64
+
+func init() {
+	for i := float64(0); i < 4; i++ {
+		status = append(status, &ss{v: int64(math.Pow(2, i))})
+		sum += status[len(status)-1].v
+	}
+}
+
+type MyStruct interface {
+	Set()
+	Load() int64
+}
+
+type MyAtomicStruct struct {
+	status atomic.Pointer[ss]
+	tasks  atomic.Int64
+}
+
+func (ms *MyAtomicStruct) Set() {
+	for i, ss := range status[1:] {
+		if ms.status.CompareAndSwap(status[i], ss) {
+			ms.tasks.Add(ss.v)
+			return
+		}
+	}
+}
+
+func (ms *MyAtomicStruct) Load() int64 {
+	return ms.tasks.Load()
+}
+
+type MyLockedStruct struct {
+	mu     sync.Mutex
+	status *ss
+	tasks  int64
+}
+
+func (ms *MyLockedStruct) Set() {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	for i, ss := range status[1:] {
+		if ms.status == status[i] {
+			ms.status = ss
+			ms.tasks += ss.v
+			return
+		}
+	}
+}
+
+func (ms *MyLockedStruct) Load() int64 {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	return ms.tasks
+}
+
+func Benchmark(b *testing.B) {
+	bench := func(name string, ms MyStruct) {
+		b.Run(name, func(b *testing.B) {
+			b.RunParallel(func(pb *testing.PB) {
+				for ; pb.Next(); ms.Set() {
+				}
+			})
+		})
+		if v := ms.Load(); v != sum {
+			b.Fatalf("unexpected %v != %v", v, sum)
+		}
+	}
+	bench("Atomic", new(MyAtomicStruct))
+	bench("Locked", new(MyLockedStruct))
+}
+
+```
+
+### 問題
+
+我在想，為何您會指出，為何程式要用 atomic 才不會有錯誤
+把整個 atomic 的底層打開來看，會看到 LOCK instruction，
+我還在想 LOCK 是什麼東西，應該是編譯器和硬體層級的鎖，可能是由 關掉中斷、鎖總線或MESI去實作 等方法去實作，這些底層黑盒子我暫時應不用再繼續打開
+總而言之，我想您會認為都要用 atomic ，程式才不會出錯，主要的原因是 atomic 會上鎖，而且是 硬體層級的鎖
+請教您是不是這樣想的？謝謝您
+
+### 解答
+
+只是因為你的 receive.task 有可能會同時被多個 goroutine 寫入而已，所以才需要要用 atomic
+
+### 問題
+
+大家都說您很厲害，但沒有切確的形容是怎麼的厲害法
+我後來發現，您沒有使用一些 Golang 本身的優化機制，都還能把效能寫的這麼強，不是每個人有這種功力
+比如，在這裡，您使用 CAS 而不使用互斥鎖
+互斥鎖有一個特點，當協程在飢餓時，其他協程就會停止自旋，還有喚醒在二叉樹裡等待協程的功能，設計也是很精密
+我就直接把事實說出來了
+
+<img src="/home/panhong/go/src/github.com/panhongrainbow/note/Go專案研究/rueidis/assets/image-20230420061326855.png" alt="image-20230420061326855"  /> 
+
+我有一個額外的問題想要請教您，這問題是為何大家喜歡用 parallelism 平行處理 這個名詞？
+就連我在 IDE 上也可以看到這個字，您有時也會提到，其他人寫部落格或博客也會提到
+我是在想，平行處理 應只是理想的狀態，但在實際的狀況下，很少會存在
+原因1，官網有提到 Go 語言是併發語言，不是平行處理的語言
+原因2，如果作業系統有重要的工作，會把CPU資源搶走，Go Scheduler 應很難真正做到 平行處理 的狀態
+我想大家所提到的平行處理應是指 **近似平行處理**，而不是真正的平行處理
+謝謝您
+
+### 解答
+
+是的 你說的沒錯
 
 
 
